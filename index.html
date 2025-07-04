@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Word Wiz for Kids</title>
+    <link rel="stylesheet" href="styles.css?v=20250810" />
+  </head>
+  <body>
+    
+    <header class="app-header">
+      <div class="brand">
+        <img src="assets/logo.svg" alt="logo" class="logo" />
+        <span>Word Wiz for Kids</span>
+      </div>
+      <nav class="nav">
+        <a href="#today" class="nav-link" data-route="today">今日新词</a>
+        <a href="#all" class="nav-link" data-route="all">全部</a>
+        <a href="#progress" class="nav-link" data-route="progress">进度</a>
+      </nav>
+      <div class="header-actions">
+        <button id="btnClearCache" class="btn danger small" title="清空本地缓存并重置进度">清理缓存</button>
+        <label for="dailyCountInput" style="margin-left:8px;color:#374151">每日个数</label>
+        <input type="number" id="dailyCountInput" class="num-input" min="1" max="20" step="1" value="5" />
+        <span style="color:#6b7280;font-size:12px">(每行固定展示5个)</span>
+        <button id="btnSwapBatch" class="btn secondary small" style="margin-left:10px">换一批</button>
+
+        <div class="dropdown">
+          <button id="btnSettings" class="btn secondary small">设置 ▾</button>
+          <div id="settingsMenu" class="dropdown-menu hidden">
+            <button id="btnSetImagesDir" class="btn secondary small" title="设置图片保存目录（仅需设置一次，选择项目内 assets/words/）">设置图片目录</button>
+            <button id="btnSetCsvFile" class="btn secondary small" title="设置 CSV 文件（仅需设置一次，选择项目内 data/words.csv）">设置CSV文件</button>
+            <button id="btnImportWords" class="btn secondary small" title="导入词表（CSV 或 TXT，一行一个或 en,cn）">导入词表</button>
+            <button id="btnFixCsv" class="btn secondary small" title="补全缺失的短句/翻译，并将远程图片下载到本地 assets/words/ 后回写 CSV">一键补全CSV并本地化图片</button>
+            <button id="btnExportWordsCsv" class="btn secondary small">导出更新后的CSV</button>
+            <button id="btnSaveWordsCsv" class="btn secondary small" title="使用浏览器文件系统访问，直接覆盖 data/words.csv（需授予权限）">保存到CSV（本地写入）</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="app" class="app-main">
+      <!-- Views are injected here -->
+    </main>
+
+    <script src="libs/pinyin-pro.umd.min.js?v=20250810"></script>
+    <script>
+      if(!window.pinyinPro || typeof window.pinyinPro.pinyin !== 'function'){
+        var s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/pinyin-pro@3.19.7/dist/pinyin-pro.umd.min.js';
+        document.head.appendChild(s);
+      }
+    </script>
+    <script type="module" src="scripts/app.js?v=20250810"></script>
+  </body>
+  </html>
+
+

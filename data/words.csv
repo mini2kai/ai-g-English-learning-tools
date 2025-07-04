@@ -1,0 +1,75 @@
+id,en,cn,pinyin,img,sent,sent_cn,img_flag
+1,apple,苹果,píng guǒ,assets/words/apple.jpg,She apples with quiet grace.,苹果着着，心也跟着轻盈起来。,新获取
+2,banana,香蕉,xiāng jiāo,assets/words/banana.jpg,I like a banana.,我喜欢一根香蕉。,新获取
+3,cat,猫,māo,assets/words/cat.jpg,The cat is cute.,这只猫很可爱。,新获取
+4,dog,狗,gǒu,assets/words/dog.jpg,The dog runs fast.,这只狗跑得很快。,新获取
+5,egg,鸡蛋,jī dàn,assets/words/egg.webp,I eat an egg.,我吃一个鸡蛋。,新获取
+6,fish,鱼,yú,assets/words/fish.jpg,The fish swims.,鱼在游泳。,新获取
+7,grape,葡萄,pú táo,assets/words/grape.jpg,The grapes are sweet.,葡萄很甜。,新获取
+8,house,房子,fáng zi,assets/words/house.jpg,This is my house.,这是我的房子。,新获取
+9,ice,冰,bīng,assets/words/ice.jpg,The ice is cold.,冰很冷。,新获取
+10,juice,果汁,guǒ zhī,assets/words/juice.jpg,I drink juice.,我喝果汁。,新获取
+11,kite,风筝,fēng zhēng,assets/words/kite.jpg,The kite flies high.,风筝飞得很高。,新获取
+12,lion,狮子,shī zi,assets/words/lion.jpg,The lion is strong.,狮子很强壮。,新获取
+13,milk,牛奶,niú nǎi,assets/words/milk.jpg,I drink milk.,我喝牛奶。,新获取
+14,nose,鼻子,bí zi,assets/words/nose.png,This is my nose.,这是我的鼻子。,新获取
+15,orange,橙子,chéng zi,assets/words/orange.jpg,The orange is big.,这个橙子很大。,新获取
+16,panda,熊猫,xióng māo,assets/words/panda.jpg,The panda eats bamboo.,熊猫吃竹子。,新获取
+17,queen,女王,nǚ wáng,assets/words/queen.jpeg,The queen wears a crown.,女王戴着王冠。,
+18,rabbit,兔子,tù zi,assets/words/rabbit.jpg,The rabbit jumps.,兔子跳起来。,新获取
+19,sun,太阳,tài yáng,assets/words/sun.jpg,The sun is bright.,太阳很明亮。,新获取
+20,tree,树,shù,assets/words/tree.jpg,The tree is tall.,这棵树很高。,新获取
+21,umbrella,伞,sǎn,assets/words/umbrella.jpg,I have an umbrella.,我有一把伞。,新获取
+22,violin,小提琴,xiǎo tí qín,assets/words/violin.png,She plays the violin.,她拉小提琴。,新获取
+23,water,水,shuǐ,assets/words/water.png,Water is clear.,水很清澈。,新获取
+24,xylophone,木琴,mù qín,assets/words/xylophone.jpg,The xylophone makes music.,木琴发出音乐。,新获取
+25,yogurt,酸奶,suān nǎi,assets/words/yogurt.jpg,This yogurt is tasty.,这杯酸奶很好喝。,新获取
+26,zebra,斑马,bān mǎ,assets/words/zebra.jpg,The zebra has stripes.,斑马有条纹。,新获取
+27,pencil,铅笔,qiān bǐ,assets/words/pencil.jpg,This is pencil.,这是铅笔。,新获取
+28,eraser,橡皮,xiàng pí,assets/words/eraser.jpg,This is eraser.,这是橡皮。,新获取
+29,book,书,shū,assets/words/book.jpg,This is book.,这是书。,新获取
+30,notebook,笔记本,bǐ jì běn,assets/words/notebook.jpg,This is notebook.,这是笔记本。,新获取
+31,desk,课桌,kè zhuō,assets/words/desk.jpg,This is desk.,这是课桌。,新获取
+32,chair,椅子,yǐ zi,assets/words/chair.jpg,This is chair.,这是椅子。,新获取
+33,teacher,老师,lǎo shī,assets/words/teacher.jpg,This is teacher.,这是老师。,新获取
+34,student,学生,xué shēng,assets/words/student.jpg,This is student.,这是学生。,新获取
+35,school,学校,xué xiào,assets/words/school.jpg,This is school.,这是学校。,新获取
+36,classroom,教室,jiào shì,assets/words/classroom.jpg,This is classroom.,这是教室。,新获取
+37,door,门,mén,assets/words/door.png,This is door.,这是门。,新获取
+38,window,窗户,chuāng hù,assets/words/window.jpg,This is window.,这是窗户。,新获取
+39,blackboard,黑板,hēi bǎn,assets/words/blackboard.jpg,This is blackboard.,这是黑板。,新获取
+40,bag,书包,shū bāo,assets/words/bag.jpg,This is bag.,这是书包。,新获取
+41,ruler,尺子,chǐ zi,assets/words/ruler.jpg,This is ruler.,这是尺子。,新获取
+42,sharpener,卷笔刀,juǎn bǐ dāo,assets/words/sharpener.jpg,This is sharpener.,这是卷笔刀。,新获取
+43,scissors,剪刀,jiǎn dāo,assets/words/scissors.jpg,This is scissors.,这是剪刀。,新获取
+44,glue,胶水,jiāo shuǐ,assets/words/glue.jpg,This is glue.,这是胶水。,新获取
+45,paint,颜料,yán liào,assets/words/paint.jpg,This is paint.,这是颜料。,新获取
+46,brush,画笔,huà bǐ,assets/words/brush.jpg,This is brush.,这是画笔。,新获取
+47,computer,电脑,diàn nǎo,assets/words/computer.jpg,This is computer.,这是电脑。,新获取
+48,mouse,鼠标,shǔ biāo,assets/words/mouse.jpg,This is mouse.,这是鼠标。,新获取
+49,keyboard,键盘,jiàn pán,assets/words/keyboard.png,This is keyboard.,这是键盘。,新获取
+50,screen,屏幕,píng mù,assets/words/screen.jpg,This is screen.,这是屏幕。,新获取
+51,homework,作业,zuò yè,assets/words/homework.jpg,This is homework.,这是作业。,新获取
+52,test,考试,kǎo shì,https://source.unsplash.com/600x400/?test,This is test.,这是考试。,
+53,lesson,课,kè,assets/words/lesson.jpg,This is lesson.,这是课。,新获取
+54,recess,课间,kè jiān,https://source.unsplash.com/600x400/?recess,This is recess.,这是课间。,
+55,playground,操场,cāo chǎng,assets/words/playground.jpg,This is playground.,这是操场。,新获取
+56,library,图书馆,tú shū guǎn,assets/words/library.jpg,This is library.,这是图书馆。,新获取
+57,cafeteria,食堂,shí táng,assets/words/cafeteria.jpg,This is cafeteria.,这是食堂。,新获取
+58,music,音乐,yīn yuè,assets/words/music.jpg,This is music.,这是音乐。,新获取
+59,art,美术,měi shù,assets/words/art.jpg,This is art.,这是美术。,新获取
+60,math,数学,shù xué,assets/words/math.jpg,This is math.,这是数学。,新获取
+61,science,科学,kē xué,assets/words/science.jpg,This is science.,这是科学。,新获取
+62,history,历史,lì shǐ,assets/words/history.jpg,This is history.,这是历史。,新获取
+63,geography,地理,dì lǐ,assets/words/geography.jpg,This is geography.,这是地理。,新获取
+64,PE,体育,tǐ yù,https://source.unsplash.com/600x400/?PE,This is PE.,这是体育。,
+65,English,英语,yīng yǔ,assets/words/english.png,This is English.,这是英语。,新获取
+66,Chinese,语文,yǔ wén,https://source.unsplash.com/600x400/?Chinese,This is Chinese.,这是语文。,
+67,friend,朋友,péng yǒu,assets/words/friend.jpg,This is friend.,这是朋友。,新获取
+68,family,家庭,jiā tíng,assets/words/family.jpg,This is family.,这是家庭。,新获取
+69,mother,母亲,mǔ qīn,assets/words/mother.jpg,This is mother.,这是母亲。,新获取
+70,father,父亲,fù qīn,assets/words/father.jpg,This is father.,这是父亲。,新获取
+71,brother,兄弟,xiōng dì,assets/words/brother.jpg,This is brother.,这是兄弟。,新获取
+72,sister,姐妹,jiě mèi,assets/words/sister.jpg,This is sister.,这是姐妹。,新获取
+73,bread,面包,miàn bāo,assets/words/bread.jpg,This is bread.,这是面包。,新获取
+74,rice,米饭,mǐ fàn,assets/words/rice.jpg,This is rice.,这是米饭。,新获取
