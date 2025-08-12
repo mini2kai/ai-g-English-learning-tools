@@ -17,8 +17,10 @@ const state = {
 // Persisted DirectoryHandle for assets/words via OPFS keys
 const IMG_DIR_HANDLE_KEY = 'ww4k.imagesDirHandle';
 const CSV_FILE_HANDLE_KEY = 'ww4k.csvFileHandle';
+const REC_DIR_HANDLE_KEY = 'ww4k.recordsDirHandle';
 let imagesDirHandle = null;
 let csvFileHandle = null;
+let recordsDirHandle = null;
 
 async function loadImagesDirHandle(){
   try{
@@ -155,6 +157,31 @@ async function init(){
         await imagesDirHandle.removeEntry('.perm_test');
         localStorage.setItem(IMG_DIR_HANDLE_KEY, 'set');
         alert('图片目录设置成功。请在“全部”页使用“替换图片”。');
+      }catch(e){ /* 用户取消 */ }
+    });
+  }
+  const setRecDirBtn = document.getElementById('btnSetRecordsDir');
+  if(setRecDirBtn){
+    setRecDirBtn.addEventListener('click', async()=>{
+      try{
+        if(!('showDirectoryPicker' in window)){
+          alert('当前浏览器不支持目录写入（需要 Chrome/Edge 92+）。');
+          return;
+        }
+        recordsDirHandle = await window.showDirectoryPicker();
+        if(recordsDirHandle.requestPermission){
+          const perm = await recordsDirHandle.requestPermission({ mode: 'readwrite' });
+          if(perm !== 'granted'){
+            alert('未授予写入权限');
+            return;
+          }
+        }
+        // 权限校验
+        const testFile = await recordsDirHandle.getFileHandle('.perm_test', { create: true });
+        const w = await testFile.createWritable(); await w.write('ok'); await w.close();
+        await recordsDirHandle.removeEntry('.perm_test');
+        localStorage.setItem(REC_DIR_HANDLE_KEY, 'set');
+        alert('录音目录设置成功。建议选择项目内 assets/records/。');
       }catch(e){ /* 用户取消 */ }
     });
   }
@@ -437,22 +464,27 @@ function bindManualRecord(card, word, startBtn, stopBtn){
     if(!isRecording) return; isRecording=false;
     startBtn.disabled = false; stopBtn.disabled = true; startBtn.textContent = '⏺️ 开始录音';
     try{
+      // 首次需要时提示设置目录
+      await ensureRecordsDirSelectedOnce();
       const blob = await rec.stop();
       const { score, transcript } = await scorePronunciation(word.en);
-      addRecordingUI(card, word, blob, score, transcript);
+      // 若可写入，则保存并返回本地相对URL
+      let localUrl = '';
+      try{ localUrl = await maybeSaveRecordingToLocalDir(blob, word); }catch{}
+      addRecordingUI(card, word, blob, score, transcript, localUrl);
     }catch(e){ console.error(e); }
   });
 }
 
-async function addRecordingUI(card, word, blob, score, transcript){
+async function addRecordingUI(card, word, blob, score, transcript, localUrl=''){ 
   const kidId = 'single';
   const currentOn = card.querySelectorAll('.dot.on').length;
   if(currentOn>=MAX_RECORDS) return;
   const idx = currentOn;
   // 将音频持久化到 IndexedDB，并写入 blobKey
   const blobKey = await putRecordingBlob('single', word.id, idx, formatDateKey(), blob);
-  const url = URL.createObjectURL(blob);
-  saveRecording(kidId, word.id, idx, { url, score, ts: Date.now(), transcript, blobKey });
+  const url = localUrl || URL.createObjectURL(blob);
+  saveRecording(kidId, word.id, idx, { url, localUrl, score, ts: Date.now(), transcript, blobKey });
   card.querySelectorAll('.dot')[idx].classList.add('on');
   const list = card.querySelector('[data-rec-list]');
   const el = document.createElement('div');
@@ -466,6 +498,47 @@ async function addRecordingUI(card, word, blob, score, transcript){
   });
   // 通知刷新提交按钮状态
   document.dispatchEvent(new CustomEvent('ww4k:record-updated'));
+}
+
+async function maybeSaveRecordingToLocalDir(blob, word){
+  // 若用户未设置目录，尝试提示一次
+  if(!recordsDirHandle){
+    return ''; // 默认不弹窗打断；用户可在“设置”中手动设置
+  }
+  try{
+    const safeName = (word.en || String(word.id)).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || `w-${word.id}`;
+    const ts = new Date();
+    const tsStr = `${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,'0')}${String(ts.getDate()).padStart(2,'0')}_${String(ts.getHours()).padStart(2,'0')}${String(ts.getMinutes()).padStart(2,'0')}${String(ts.getSeconds()).padStart(2,'0')}`;
+    const fname = `${safeName}_${tsStr}.webm`;
+    const fh = await recordsDirHandle.getFileHandle(fname, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    // 约定所选目录为项目 assets/records/
+    return `assets/records/${fname}`;
+  }catch(e){ /* 忽略失败 */ }
+  return '';
+}
+
+async function ensureRecordsDirSelectedOnce(){
+  if(recordsDirHandle) return;
+  try{
+    if(!('showDirectoryPicker' in window)) return;
+    // 弹出一次，建议选择项目内 assets/records/
+    const ok = confirm('是否设置录音保存目录？建议选择项目内的 assets/records/ 目录，这样录音可直接在页面中回放。');
+    if(!ok) return;
+    const handle = await window.showDirectoryPicker();
+    if(handle.requestPermission){
+      const perm = await handle.requestPermission({ mode: 'readwrite' });
+      if(perm !== 'granted') return;
+    }
+    // 简单权限校验
+    const tf = await handle.getFileHandle('.perm_test', { create: true });
+    const w = await tf.createWritable(); await w.write('ok'); await w.close();
+    await handle.removeEntry('.perm_test');
+    recordsDirHandle = handle;
+    localStorage.setItem(REC_DIR_HANDLE_KEY, 'set');
+  }catch{ /* 用户取消 */ }
 }
 
 // 删除练习渲染函数
