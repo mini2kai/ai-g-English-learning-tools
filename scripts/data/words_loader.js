@@ -4,49 +4,31 @@
 let csvHeader = [];
 
 export async function loadWords(){
+  // 快速加载：仅解析 CSV，不进行任何 HEAD/远程拉取，首次渲染更快
   const resp = await fetch('./data/words.csv?v=20250810', { cache: 'no-store' });
   const text = await resp.text();
   const rows = parseCSV(text);
-  // Map to objects, auto id if missing
   const items = rows.map((r, idx)=>{
     const item = { ...r };
     item.id = Number(r.id || idx + 1);
     item.en = (r.en?.trim() || '');
     item.cn = (r.cn?.trim() || '');
     item.pinyin = (r.pinyin?.trim() || '');
-    item.img = (r.img?.trim() || '');
+    const csvImg = (r.img?.trim() || '');
+    // 若 CSV 已指向本地 assets/words/ 或远程，直接使用
+    if(csvImg){
+      item.img = csvImg;
+      item.img_origin = 'csv';
+    }else{
+      // 默认推断一个本地 .jpg 路径（不做 HEAD 试探），懒加载阶段若 404 会回退
+      const dashed = (item.en || String(item.id)).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || `w-${item.id}`;
+      item.img = `assets/words/${dashed}.jpg`;
+      item.img_origin = 'local_assumed_jpg';
+    }
     item.sent = (r.sent?.trim() || '');
     item.sent_cn = (r.sent_cn?.trim() || '');
     return item;
   }).filter(x=>x.en);
-  // Image priority: local assets -> CSV img -> Wikimedia(en) -> Wikimedia(zh) -> Unsplash(en) -> Unsplash(zh) -> placeholder
-  for(const w of items){
-    let chosen = '';
-    const localUrl = await findLocalAssetForWord(w.en);
-    if(localUrl){
-      chosen = localUrl;
-      w.img_origin = 'local';
-    }else if(w.img){
-      chosen = w.img; // prefer CSV if provided
-      w.img_origin = 'csv';
-    }else{
-      const wikiEn = await fetchWikimediaThumb(w.en, 'en');
-      if(wikiEn){ chosen = wikiEn; w.img_origin = 'wikimedia_en'; }
-      else{
-        const cnTerm = w.cn || '';
-        const wikiZh = cnTerm ? await fetchWikimediaThumb(cnTerm, 'zh') : '';
-        if(wikiZh){ chosen = wikiZh; w.img_origin = 'wikimedia_zh'; }
-        else{
-          const unsEn = buildUnsplashSource(w.en);
-          if(unsEn){ chosen = unsEn; w.img_origin = 'unsplash_en'; }
-          if(!chosen && cnTerm){ chosen = buildUnsplashSource(cnTerm); w.img_origin = 'unsplash_zh'; }
-        }
-      }
-    }
-    w.img = chosen || `https://via.placeholder.com/400?text=${encodeURIComponent(w.en)}`;
-    if(!w.img_origin) w.img_origin = w.img ? 'unknown' : 'placeholder';
-    w.img_flag = (w.img_origin === 'csv') ? '' : '新获取';
-  }
   return items;
 }
 
@@ -101,22 +83,7 @@ export function buildUpdatedWordsCsv(items){
   return lines.join('\n');
 }
 
-// Try local assets in assets/words/<name>.(webp|jpg|png|jpeg)
-async function findLocalAssetForWord(englishWord){
-  const base = 'assets/words/';
-  const nameVariants = buildNameVariants(englishWord);
-  const extensions = ['webp', 'jpg', 'png', 'jpeg'];
-  for(const name of nameVariants){
-    for(const ext of extensions){
-      const url = `${base}${name}.${ext}`;
-      try{
-        const resp = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if(resp.ok) return url;
-      }catch{ /* ignore */ }
-    }
-  }
-  return '';
-}
+// 不再进行本地资源 HEAD 探测，以避免启动时大量 404；懒加载期间由 <img> 自行触发并回退
 
 function buildNameVariants(englishWord){
   const raw = String(englishWord || '').trim();

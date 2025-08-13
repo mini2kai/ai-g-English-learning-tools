@@ -1,17 +1,21 @@
 import { $, $all, formatDateKey, speak } from './utils.js';
 import { MicRecorder, scorePronunciation } from './recorder.js';
-import { getKidDay, recordWordLearned, saveRecording, getGlobal, setGlobal, deleteRecording, submitWord, putRecordingBlob, getRecordingBlobByKey } from './storage.js';
+import { getKidDay, recordWordLearned, saveRecording, getGlobal, setGlobal, deleteRecording, submitWord, putRecordingBlob, getRecordingBlobByKey, persistDirectoryHandle, loadDirectoryHandle, deleteRecordingBlobByKey, markTaskCompleted, setTaskAvgScore } from './storage.js';
 import { loadWords, buildUpdatedWordsCsv, resolveBestImageUrl } from './data/words_loader.js?v=20250810';
 import { generateSentenceForWord } from './sentence_gen.js';
 
-let DAILY_COUNT = 5;
+let LEARN_COUNT = 5;      // 学习新词个数（可调）
+const TASK_COUNT = 5;     // 每日任务固定 5
 const MAX_RECORDS = 3;
+let __syncingAll = false;
 
 const state = {
-  route: 'today',
+  route: 'task',
   kidId: 'kid1',
   todayKey: formatDateKey(),
   allSearch: '',
+  learnBatchIds: [],
+  progressKind: 'task', // 'task' | 'learn'
 };
 
 // Persisted DirectoryHandle for assets/words via OPFS keys
@@ -71,8 +75,18 @@ async function init(){
   try{
     window.__WORDS__ = await loadWords();
   }catch{ window.__WORDS__ = window.__WORDS__ || []; }
+  // 恢复持久化的目录句柄（若浏览器支持）
+  try{
+    const recHandle = await loadDirectoryHandle('recordsDir');
+    if(recHandle){
+      if(!recHandle.requestPermission || (await recHandle.requestPermission({ mode: 'readwrite' })) === 'granted'){
+        recordsDirHandle = recHandle;
+      }
+    }
+  }catch{}
   const hashRoute = location.hash.replace('#','');
-  if(hashRoute) state.route = hashRoute;
+  state.route = hashRoute || 'task';
+  if(!hashRoute){ location.hash = 'task'; }
   // 单孩子模式，无需切换
   $all('.nav-link').forEach(link=>{
     link.addEventListener('click', (e)=>{
@@ -86,9 +100,13 @@ async function init(){
   window.addEventListener('hashchange', ()=>{
     const hashRoute = (location.hash || '').replace('#','');
     if(hashRoute===state.route) return;
-    if(hashRoute==='today' || hashRoute==='all' || hashRoute==='progress'){
+    if(hashRoute==='learn' || hashRoute==='task' || hashRoute==='all' || hashRoute==='progress'){
       state.route = hashRoute;
       render();
+      // 切换到 progress 时，做一次防抖的全量同步
+      if(state.route==='progress'){
+        debounceSyncAll();
+      }
     }
   });
   // 预热语音，确保首次点击快速发音
@@ -119,19 +137,20 @@ async function init(){
   }
   const dailyInput = document.getElementById('dailyCountInput');
   if(dailyInput){
-    dailyInput.value = String(DAILY_COUNT);
+    dailyInput.value = String(LEARN_COUNT);
     dailyInput.addEventListener('change', ()=>{
       const v = Math.max(1, Math.min(20, Number(dailyInput.value)||5));
-      DAILY_COUNT = v;
+      LEARN_COUNT = v;
       render();
     });
   }
   const swapBtn = document.getElementById('btnSwapBatch');
   if(swapBtn){
     swapBtn.addEventListener('click', ()=>{
-      // 每次点击，将指针向后移动 DAILY_COUNT，并刷新今日单词
-      setGlobal(db=>({ ...db, lastWordIdx: ((db.lastWordIdx||0) + DAILY_COUNT) % (window.__WORDS__.length || 1) }));
-      sessionStorage.removeItem('ww4k.todayCommitted');
+      if(state.route !== 'learn') return;
+      // 学习新词换一批：生成新批次 id 列表
+      const ids = (pickRandomDistinct(window.__WORDS__||[], LEARN_COUNT) || []).map(w=> w.id);
+      state.learnBatchIds = ids;
       render();
     });
   }
@@ -160,6 +179,29 @@ async function init(){
       }catch(e){ /* 用户取消 */ }
     });
   }
+  // 切换手机版/桌面版（带容错）
+  const swMobile = document.getElementById('btnSwitchToMobile');
+  if(swMobile){
+    swMobile.addEventListener('click', async()=>{
+      try{
+        const resp = await fetch('/switch-view?view=mobile&next=/mobile', { method:'GET' });
+        if(resp.redirected){ location.href = resp.url; return; }
+        if(resp.ok){ location.href = '/mobile'; return; }
+        alert('暂时不支持切换');
+      }catch{ alert('暂时不支持切换'); }
+    });
+  }
+  const swDesktop = document.getElementById('btnSwitchToDesktop');
+  if(swDesktop){
+    swDesktop.addEventListener('click', async()=>{
+      try{
+        const resp = await fetch('/switch-view?view=desktop&next=/', { method:'GET' });
+        if(resp.redirected){ location.href = resp.url; return; }
+        if(resp.ok){ location.href = '/'; return; }
+        alert('暂时不支持切换');
+      }catch{ alert('暂时不支持切换'); }
+    });
+  }
   const setRecDirBtn = document.getElementById('btnSetRecordsDir');
   if(setRecDirBtn){
     setRecDirBtn.addEventListener('click', async()=>{
@@ -181,6 +223,7 @@ async function init(){
         const w = await testFile.createWritable(); await w.write('ok'); await w.close();
         await recordsDirHandle.removeEntry('.perm_test');
         localStorage.setItem(REC_DIR_HANDLE_KEY, 'set');
+        try{ await persistDirectoryHandle('recordsDir', recordsDirHandle); }catch{}
         alert('录音目录设置成功。建议选择项目内 assets/records/。');
       }catch(e){ /* 用户取消 */ }
     });
@@ -333,18 +376,48 @@ async function init(){
       }catch(e){ /* 用户取消 */ }
     });
   }
+  try{ await syncAllProgressFromServer(); }catch{}
   render();
 }
 
-function getTodayWords(){
-  const db = getGlobal();
-  const words = window.__WORDS__;
-  const start = (db.lastWordIdx || 0) % words.length;
-  const picked = [];
-  for(let i=0;i<DAILY_COUNT;i++){
-    picked.push(words[(start+i)%words.length]);
+function pickRandomDistinct(arr, n){
+  const total = arr.length; if(total===0) return [];
+  const idxs = new Set();
+  while(idxs.size < Math.min(n, total)){
+    idxs.add(Math.floor(Math.random()*total));
   }
-  return { list: picked, startIndex: start };
+  return Array.from(idxs).map(i=> arr[i]);
+}
+
+function getLearnWords(){
+  const words = window.__WORDS__ || [];
+  // 若 state.learnBatchIds 有值，则按该批次
+  if(state.learnBatchIds && state.learnBatchIds.length){
+    const list = state.learnBatchIds.map(id=> words.find(w=> String(w.id)===String(id))).filter(Boolean);
+    return { list };
+  }
+  const picked = pickRandomDistinct(words, LEARN_COUNT);
+  state.learnBatchIds = picked.map(w=> w.id);
+  return { list: picked };
+}
+
+function getTaskWords(){
+  const db = getGlobal();
+  if(!db.taskSelections) db.taskSelections = {};
+  const dayKey = formatDateKey();
+  const all = window.__WORDS__ || [];
+  if(db.taskSelections[dayKey]?.wordIds?.length === TASK_COUNT){
+    const ids = db.taskSelections[dayKey].wordIds;
+    return { list: ids.map(id => all.find(w=> String(w.id)===String(id))).filter(Boolean) };
+  }
+  const start = (db.lastTaskIdx || 0) % (all.length || 1);
+  const picked = [];
+  for(let i=0;i<TASK_COUNT;i++) picked.push(all[(start + i) % (all.length || 1)]);
+  const ids = picked.map(w=> w.id);
+  db.taskSelections[dayKey] = { startIndex: start, wordIds: ids };
+  db.lastTaskIdx = (start + TASK_COUNT) % (all.length || 1);
+  setGlobal(db);
+  return { list: picked };
 }
 
 // 提交后再推进指针
@@ -352,22 +425,25 @@ function getTodayWords(){
 function render(){
   $all('.nav-link').forEach(l=> l.classList.toggle('active', l.getAttribute('data-route')===state.route));
   const root = $('#app');
-  if(state.route === 'today') return renderToday(root);
+  if(state.route === 'learn') return renderWordModule(root, 'learn');
+  if(state.route === 'task') return renderWordModule(root, 'task');
   // 去掉“练习”模块，改为“全部”
   if(state.route === 'all') return renderAllWords(root);
   if(state.route === 'progress') return renderProgress(root);
 }
 
-function renderToday(root){
-  const { list, startIndex } = getTodayWords();
+function renderWordModule(root, mode){
+  const isLearn = mode==='learn';
+  const { list } = isLearn ? getLearnWords() : getTaskWords();
   const day = getKidDay('single', state.todayKey);
   const htmlCards = list.map((w,i)=>{
-    const learned = day.learnedIds.includes(w.id);
-    const dots = new Array(MAX_RECORDS).fill(0).map((_,k)=>`<span class="dot ${day.recordings[w.id]?.[k]? 'on':''}"></span>`).join('');
+    const branch = isLearn ? (day.learnRecordings||{}) : (day.recordings||{});
+    const dots = new Array(MAX_RECORDS).fill(0).map((_,k)=>`<span class="dot ${branch[w.id]?.[k]? 'on':''}"></span>`).join('');
+    const { preferred, fallback } = preferJpgUrlFast(w.img || '');
     return `
       <div class="card" data-word-id="${w.id}">
         <div class="word-row"><div class="word">${w.en}</div><button class="icon-btn btn-say" aria-label="play">🔊</button></div>
-        <img class="img" src="${w.img}" alt="${w.en}" />
+        <img class="img lazy" loading="lazy" data-src="${preferred}" data-fallback-src="${fallback}" alt="${w.en}" />
         <div class="pinyin">${w.pinyin}</div>
         <div class="cn">${w.cn}</div>
         <div class="sentence">
@@ -386,12 +462,24 @@ function renderToday(root){
       </div>`;
   }).join('');
 
+  const title = isLearn ? '学习新词' : '每日任务';
+  const subtitle = isLearn ? `随机挑选 ${LEARN_COUNT} 个单词` : `今日固定 ${TASK_COUNT} 个单词`;
+  let doneHtml = '';
+  if(!isLearn){
+    const db = getGlobal();
+    const dayData = db.days?.[state.todayKey] || {};
+    if(dayData.taskCompleted){
+      doneHtml = `<div style="text-align:center;margin:8px 0"><span class="done-banner">任务已完成 ✓</span></div>`;
+    }
+  }
   root.innerHTML = `
     <section class="view">
-      <div class="page-title">今天学习 5 个新单词</div>
-      <div class="page-subtitle">点击卡片上的按钮来听读与录音。每个单词可录音 3 次。</div>
+      <div class="page-title">${title}</div>
+      <div class="page-subtitle">${subtitle}。点击卡片上的按钮来听读与录音。每个单词可录音 ${MAX_RECORDS} 次。</div>
+      ${doneHtml}
       <div class="grid">${htmlCards}</div>
-      <div style="text-align:center;margin-top:16px"><div class="badge">录满3次的单词可单独提交</div></div>
+      <div style="text-align:center;margin-top:16px"><div class="badge">录满${MAX_RECORDS}次的单词可单独提交${!isLearn ? '；全部5个均提交后自动完成今日任务' : ''}</div></div>
+      ${isLearn ? `<div style="text-align:center;margin-top:10px"><button class="btn" id="btnSwapLearn">换一批</button></div>` : ''}
     </section>`;
 
   // bind
@@ -407,12 +495,14 @@ function renderToday(root){
 
     // 如果该词已有录音，渲染历史
     const day = getKidDay('single', state.todayKey);
-    const recs = day.recordings[word.id] || [];
+    const branch = isLearn ? (day.learnRecordings||{}) : (day.recordings||{});
+    const recs = branch[word.id] || [];
     const listWrap = card.querySelector('[data-rec-list]');
     recs.forEach((r, idx)=>{
       if(!r) return;
       const el = document.createElement('div');
       el.className = 'stat';
+      el.setAttribute('data-rec-idx', String(idx));
       el.innerHTML = `<audio controls src="${r.url || ''}" data-blob-key="${r.blobKey||''}"></audio><span class="badge">得分 ${Math.round((r.score||0)*100)}</span><button class="btn secondary" data-del-idx="${idx}">删除</button>`;
       listWrap.appendChild(el);
       // 若无 URL 但有 blobKey，尝试恢复
@@ -423,6 +513,14 @@ function renderToday(root){
         });
       }
       el.querySelector('[data-del-idx]').addEventListener('click', ()=>{
+        try{
+          const d = getKidDay('single', state.todayKey);
+          const rec = d.recordings[word.id]?.[idx];
+          const lurl = rec?.localUrl || '';
+          const bkey = rec?.blobKey || '';
+          if(lurl) removeLocalRecordingFileByUrl(lurl);
+          if(bkey) deleteRecordingBlobByKey(bkey);
+        }catch{}
         deleteRecording('single', word.id, idx);
         el.remove();
         const dot = card.querySelectorAll('.dot')[idx];
@@ -434,22 +532,75 @@ function renderToday(root){
     const submitBtn = card.querySelector('[data-submit-id]');
     const refreshSingle = ()=>{
       const d = getKidDay('single', state.todayKey);
-      const arr = d.recordings[word.id] || [];
+      const branch2 = isLearn ? (d.learnRecordings||{}) : (d.recordings||{});
+      const arr = branch2[word.id] || [];
       let cnt=0; (arr||[]).forEach(x=>{ if(x) cnt++; });
-      submitBtn.disabled = !(cnt>=MAX_RECORDS);
+    submitBtn.disabled = false; // 允许点击，由点击逻辑判断是否满足3次
       submitBtn.textContent = '提交此单词';
     };
     refreshSingle();
-    submitBtn.addEventListener('click', ()=>{
-      submitWord('single', word.id, state.todayKey);
-      // 可重复提交更新，不禁用按钮
-      alert('已提交该单词');
-      refreshSingle();
+    submitBtn.addEventListener('click', async ()=>{
+    const d = getKidDay('single', state.todayKey);
+      const branch3 = isLearn ? (d.learnRecordings||{}) : (d.recordings||{});
+      const arr = branch3[word.id] || [];
+    let cnt=0; (arr||[]).forEach(x=>{ if(x) cnt++; });
+    if(cnt < MAX_RECORDS){
+      alert(`请录入三次录音`);
+      return;
+    }
+    const prevText = submitBtn.textContent;
+    submitBtn.textContent = '数据上传中…';
+    submitBtn.disabled = true;
+    let ok = true;
+    try{
+      // 保障录音也同步：将本地该词的录音逐条上报并等待完成
+      const recs = (branch3[word.id] || []).filter(Boolean);
+      await Promise.all(recs.map(r=>{
+        const url = r.url || r.localUrl || '';
+        if(!url) return Promise.resolve();
+        return fetch('/api/progress/recording', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ day: state.todayKey, wordId: String(word.id), url, score: Number(r.score||0), ts: Number(r.ts||Date.now()), transcript: r.transcript||'', kind: isLearn ? 'learn' : 'task' })
+        }).then(res=> res.ok ? res.json().catch(()=>({ok:true})) : Promise.reject()).then(j=>{ if(!(j&&j.ok)) ok=false; }).catch(()=>{ ok=false; });
+      }));
+      // 上报提交
+      if(ok){
+        const resp = await fetch('/api/progress/submit-word', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ day: state.todayKey, wordId: String(word.id), ts: Date.now(), kind: isLearn ? 'learn' : 'task' })
+        });
+        ok = resp.ok && !!(await resp.json().catch(()=>({ok:false}))).ok;
+      }
+    }catch{ ok = false; }
+    if(ok){
+      submitWord('single', word.id, state.todayKey, isLearn ? 'learn' : 'task');
+      alert('提交成功');
+      if(!isLearn){
+        try{ await autoCheckCompleteTask(); }catch{}
+      }
+    }else{
+      // 仍显示上传中，不提示成功
+      alert('数据上传中，稍后再试');
+    }
+    submitBtn.textContent = prevText;
+    submitBtn.disabled = false;
+    refreshSingle();
     });
   });
 
+  // 懒加载图片
+  setupLazyImages(root);
   // 录音变化刷新所有卡片的单词提交按钮
-  document.addEventListener('ww4k:record-updated', ()=>{ renderToday(root); }, { once: false });
+  document.addEventListener('ww4k:record-updated', ()=>{ renderWordModule(root, mode); }, { once: false });
+  // 仅学习新词换一批
+  const swapBtnInline = document.getElementById('btnSwapLearn');
+  if(swapBtnInline){ swapBtnInline.addEventListener('click', ()=>{ state.learnBatchIds = []; renderWordModule(root, 'learn'); }); }
+  // 取消“完成今日任务”按钮，改为自动完成：在每次提交单词后与渲染时检测
+  if(!isLearn){
+    autoCheckCompleteTask();
+  }
 }
 
 function bindManualRecord(card, word, startBtn, stopBtn){
@@ -464,8 +615,6 @@ function bindManualRecord(card, word, startBtn, stopBtn){
     if(!isRecording) return; isRecording=false;
     startBtn.disabled = false; stopBtn.disabled = true; startBtn.textContent = '⏺️ 开始录音';
     try{
-      // 首次需要时提示设置目录
-      await ensureRecordsDirSelectedOnce();
       const blob = await rec.stop();
       const { score, transcript } = await scorePronunciation(word.en);
       // 若可写入，则保存并返回本地相对URL
@@ -478,43 +627,86 @@ function bindManualRecord(card, word, startBtn, stopBtn){
 
 async function addRecordingUI(card, word, blob, score, transcript, localUrl=''){ 
   const kidId = 'single';
-  const currentOn = card.querySelectorAll('.dot.on').length;
-  if(currentOn>=MAX_RECORDS) return;
-  const idx = currentOn;
+  // 选择首个空位；若满，则替换最早的记录
+  const idx = chooseAttemptIndex(word.id);
+  // 若当前位置已有旧文件且为本地文件/旧blob，先删除
+  try{
+    const day = getKidDay(kidId, formatDateKey());
+    const old = day.recordings[word.id]?.[idx];
+    const oldUrl = old?.localUrl || '';
+    const oldBlobKey = old?.blobKey || '';
+    if(oldUrl) await removeLocalRecordingFileByUrl(oldUrl);
+    if(oldBlobKey) await deleteRecordingBlobByKey(oldBlobKey);
+  }catch{}
   // 将音频持久化到 IndexedDB，并写入 blobKey
   const blobKey = await putRecordingBlob('single', word.id, idx, formatDateKey(), blob);
   const url = localUrl || URL.createObjectURL(blob);
-  saveRecording(kidId, word.id, idx, { url, localUrl, score, ts: Date.now(), transcript, blobKey });
-  card.querySelectorAll('.dot')[idx].classList.add('on');
+  // learn/task 分支：根据当前页面
+  const isLearn = document.querySelector('.page-title')?.textContent?.includes('学习新词');
+  saveRecording(kidId, word.id, idx, { url, localUrl, score, ts: Date.now(), transcript, blobKey }, formatDateKey(), isLearn ? 'learn' : 'task');
+  // 同步到服务器（追加一条）
+  try{
+    await fetch('/api/progress/recording', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day: formatDateKey(), wordId: String(word.id), url, score, ts: Date.now(), transcript, kind: isLearn ? 'learn' : 'task' })
+    });
+  }catch{}
+  const dots = card.querySelectorAll('.dot');
+  if(dots[idx]) dots[idx].classList.add('on');
   const list = card.querySelector('[data-rec-list]');
   const el = document.createElement('div');
   el.className = 'stat';
   el.innerHTML = `<audio controls src="${url}"></audio><span class="badge">得分 ${Math.round(score*100)}</span><button class="btn secondary" data-del-idx="${idx}">删除</button>`;
   list.appendChild(el);
   el.querySelector('[data-del-idx]').addEventListener('click', ()=>{
+    // 删除本地文件
+    try{
+      const d = getKidDay(kidId, formatDateKey());
+      const r = d.recordings[word.id]?.[idx];
+      const lurl = r?.localUrl || '';
+      const bkey = r?.blobKey || '';
+      if(lurl) removeLocalRecordingFileByUrl(lurl);
+      if(bkey) deleteRecordingBlobByKey(bkey);
+    }catch{}
     deleteRecording(kidId, word.id, idx);
     el.remove();
-    card.querySelectorAll('.dot')[idx].classList.remove('on');
+    const dEl = card.querySelectorAll('.dot')[idx];
+    if(dEl) dEl.classList.remove('on');
   });
   // 通知刷新提交按钮状态
   document.dispatchEvent(new CustomEvent('ww4k:record-updated'));
 }
 
 async function maybeSaveRecordingToLocalDir(blob, word){
-  // 若用户未设置目录，尝试提示一次
+  // 优先走后端保存，无需前端授权
+  try{
+    const form = new FormData();
+    const ext = 'webm';
+    form.append('audio', blob, `${(word.en||'record').toLowerCase()}.${ext}`);
+    form.append('word', word.en || String(word.id||'word'));
+    const resp = await fetch('/api/recordings', { method: 'POST', body: form });
+    if(resp.ok){
+      const data = await resp.json();
+      if(data && data.ok && data.url){
+        return data.url;
+      }
+    }
+  }catch{}
+  // 回退：若配置过目录，则写入本地目录；否则返回空串
   if(!recordsDirHandle){
-    return ''; // 默认不弹窗打断；用户可在“设置”中手动设置
+    return '';
   }
   try{
     const safeName = (word.en || String(word.id)).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || `w-${word.id}`;
     const ts = new Date();
     const tsStr = `${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,'0')}${String(ts.getDate()).padStart(2,'0')}_${String(ts.getHours()).padStart(2,'0')}${String(ts.getMinutes()).padStart(2,'0')}${String(ts.getSeconds()).padStart(2,'0')}`;
-    const fname = `${safeName}_${tsStr}.webm`;
+    const rand = Math.random().toString(36).slice(2,8);
+    const fname = `${safeName}_${tsStr}_${rand}.webm`;
     const fh = await recordsDirHandle.getFileHandle(fname, { create: true });
     const w = await fh.createWritable();
     await w.write(blob);
     await w.close();
-    // 约定所选目录为项目 assets/records/
     return `assets/records/${fname}`;
   }catch(e){ /* 忽略失败 */ }
   return '';
@@ -538,7 +730,52 @@ async function ensureRecordsDirSelectedOnce(){
     await handle.removeEntry('.perm_test');
     recordsDirHandle = handle;
     localStorage.setItem(REC_DIR_HANDLE_KEY, 'set');
+    try{ await persistDirectoryHandle('recordsDir', recordsDirHandle); }catch{}
   }catch{ /* 用户取消 */ }
+}
+
+function findAvailableAttemptIndex(wordId){
+  const d = getKidDay('single', formatDateKey());
+  const arr = d.recordings[wordId] || [];
+  for(let i=0;i<MAX_RECORDS;i++){
+    if(!arr[i]) return i;
+  }
+  return -1;
+}
+
+function chooseAttemptIndex(wordId){
+  const available = findAvailableAttemptIndex(wordId);
+  if(available >= 0) return available;
+  // 若无空位，找最早的 ts 进行替换
+  const d = getKidDay('single', formatDateKey());
+  const arr = d.recordings[wordId] || [];
+  let bestIdx = 0;
+  let bestTs = Number.MAX_SAFE_INTEGER;
+  for(let i=0;i<Math.min(MAX_RECORDS, arr.length); i++){
+    const ts = (arr[i]?.ts) || 0;
+    if(ts < bestTs){ bestTs = ts; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+async function removeLocalRecordingFileByUrl(localUrl){
+  if(!localUrl) return;
+  // 优先走后端删除
+  try{
+    const name = (localUrl.split('/').pop()||'');
+    if(name){
+      await fetch(`/api/recordings/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      return;
+    }
+  }catch{}
+  // 回退：前端已保存目录的情况下，尝试直接删除
+  if(!recordsDirHandle) return;
+  try{
+    const m = localUrl.match(/assets\/records\/(.+)$/i) || localUrl.match(/assets\/records\/(.+)$/i);
+    const name = m ? m[1] : (localUrl.split('/').pop()||'');
+    if(!name) return;
+    await recordsDirHandle.removeEntry(name);
+  }catch{ /* 可能文件不存在或权限问题 */ }
 }
 
 // 删除练习渲染函数
@@ -560,7 +797,9 @@ function renderAllWords(root){
   const start = (allPage-1)*perPage;
   const slice = list.slice(start, start+perPage);
 
-  const cards = slice.map(w=>`
+  const cards = slice.map(w=>{
+    const { preferred, fallback } = preferJpgUrlFast(w.img || '');
+    return `
     <div class="card" data-word-id="${w.id}">
       <div class="word-row">
         <div class="menu-host" style="display:flex;align-items:center;gap:8px;position:relative">
@@ -573,7 +812,7 @@ function renderAllWords(root){
         <button class="icon-btn btn-say" aria-label="play">🔊</button>
       </div>
       <div class="img-wrap">
-        <img class="img" src="${w.img}" alt="${w.en}" style="border-radius:16px"/>
+        <img class="img lazy" loading="lazy" data-src="${preferred}" data-fallback-src="${fallback}" alt="${w.en}" style="border-radius:16px"/>
       </div>
       <div class="pinyin">${w.pinyin}</div>
       <div class="cn">${w.cn}</div>
@@ -581,7 +820,8 @@ function renderAllWords(root){
         <div class="en">${w.sent || ''}<button class="icon-btn btn-sent-say" title="读短句">🔊</button></div>
         <div class="cn">${w.sent_cn || ''}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   root.innerHTML = `
     <section class="view">
@@ -681,29 +921,52 @@ function renderAllWords(root){
       }catch(err){ /* 用户取消或浏览器不支持 */ }
     });
   });
+  // 懒加载图片
+  setupLazyImages(root);
   $('#prevAll').addEventListener('click', ()=>{ if(allPage>1){ allPage--; renderAllWords(root); } });
   $('#nextAll').addEventListener('click', ()=>{ const tp=Math.ceil(total/perPage); if(allPage<tp){ allPage++; renderAllWords(root); } });
 }
 
-function renderProgress(root){
-  const db = getGlobal();
-  const days = Object.keys(db.days||{}).sort();
+async function renderProgress(root){
+  // 服务器为准，失败再回退本地
+  root.innerHTML = `
+    <section class="view progress-wrap">
+      <div class="page-title">学习进度</div>
+      <div class="page-subtitle">加载中…</div>
+      <div class="card">请稍候</div>
+    </section>`;
+  let serverDays = null;
+  try{
+    const resp = await fetch('/api/progress', { cache: 'no-store' });
+    if(resp.ok){ const d = await resp.json(); if(d && d.ok) serverDays = d.days || {}; }
+  }catch{}
+  const useDays = serverDays || (getGlobal().days || {});
+  const tab = state.progressKind === 'learn' ? 'learn' : 'task';
+  const tabsHtml = `
+    <div style="display:flex;gap:8px;justify-content:center;margin:8px 0">
+      <button class="btn small ${tab==='task'?'':'secondary'}" id="btnTabTask">每日任务进度</button>
+      <button class="btn small ${tab==='learn'?'':'secondary'}" id="btnTabLearn">学习新词进度</button>
+    </div>`;
+  const dayKeys = Object.keys(useDays).sort();
   let totalLearned = 0;
-  const rows = days.map(dayKey=>{
-    const d = db.days[dayKey];
-    // 只统计已提交的单词数量
+  const rows = dayKeys.map(dayKey=>{
+    const d = (useDays[dayKey]||{})[tab] || {};
     const submittedCount = (d.submittedWordIds||[]).length;
     totalLearned += submittedCount;
-    const passed = averageDailyScore(d);
-    return `<div class=\"progress-row\"><div>${dayKey}</div><div class=\"stat\"><span class=\"badge\">${submittedCount} 词</span><span class=\"badge\">平均得分 ${Math.round(passed*100)}</span><button data-detail=\"${dayKey}\" class=\"btn small secondary\">查看详情</button></div></div>`;
+    // 计算均分：遍历录音
+    const scores=[];
+    Object.values(d.recordings||{}).forEach(arr=>{ (arr||[]).forEach(r=>{ if(r && typeof r.score==='number') scores.push(Number(r.score)||0); }); });
+    const passed = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+    const taskInfo = d.taskCompleted ? `<span class=\"badge\">任务完成 ✓</span><span class=\"badge\">任务均分 ${Math.round((d.taskAvgScore||0)*100)}</span>` : `<span class=\"badge\">任务未完成</span>`;
+    return `<div class=\"progress-row\"><div>${dayKey}</div><div class=\"stat\"><span class=\"badge\">${submittedCount} 词</span><span class=\"badge\">平均得分 ${Math.round(passed*100)}</span>${taskInfo}<button data-detail=\"${dayKey}\" class=\"btn small secondary\">查看详情</button></div></div>`;
   }).join('');
   root.innerHTML = `
     <section class="view progress-wrap">
       <div class="page-title">学习进度</div>
       <div class="page-subtitle">累计已认识 <b>${totalLearned}</b> 个单词</div>
+      ${tabsHtml}
       <div class="card">${rows || '暂无记录'}</div>
     </section>`;
-
   // bind detail links
   $all('[data-detail]').forEach(a=>{
     a.addEventListener('click', (e)=>{
@@ -711,17 +974,40 @@ function renderProgress(root){
       renderProgressDetail($('#app'), dayKey);
     });
   });
+  const btnTabTask = document.getElementById('btnTabTask');
+  const btnTabLearn = document.getElementById('btnTabLearn');
+  if(btnTabTask){ btnTabTask.addEventListener('click', ()=>{ state.progressKind='task'; renderProgress(root); }); }
+  if(btnTabLearn){ btnTabLearn.addEventListener('click', ()=>{ state.progressKind='learn'; renderProgress(root); }); }
 }
-function renderProgressDetail(root, dayKey){
-  const db = getGlobal();
-  const d = db.days?.[dayKey];
-  // 仅显示已提交的单词
-  const submittedSet = new Set(d?.submittedWordIds || []);
-  const items = Object.entries(d?.recordings || {}).filter(([wid])=> submittedSet.has(Number(wid))).map(([wid, recs])=>{
-    const w = window.__WORDS__.find(x=> String(x.id)===String(wid));
-    const audios = (recs||[]).map((r,i)=> r ? `<div class=\"stat\"><audio controls src=\"${r.url}\"></audio><span class=\"badge\">${Math.round((r.score||0)*100)}</span></div>` : '').join('');
-    return `<div class=\"card\"><div class=\"word\">${w?.en || '未知'}</div><div class=\"cn\">${w?.cn || ''} · ${w?.pinyin || ''}</div>${audios}</div>`;
-  }).join('');
+async function renderProgressDetail(root, dayKey){
+  root.innerHTML = `
+    <section class=\"view\">
+      <div class=\"page-title\">${dayKey} 详情</div>
+      <div class=\"page-subtitle\">加载中…</div>
+      <div class=\"grid\">请稍候</div>
+      <div style=\"margin-top:16px;text-align:center\"><a href=\"#progress\" class=\"btn small\" id=\"btnBackProgress\">返回</a></div>
+    </section>`;
+  let d = null;
+  try{
+    const resp = await fetch(`/api/progress/${encodeURIComponent(dayKey)}`, { cache: 'no-store' });
+    if(resp.ok){ const j = await resp.json(); if(j && j.ok) d = j.day || null; }
+  }catch{}
+  if(!d){
+    const db = getGlobal();
+    d = (db.days?.[dayKey] || {});
+  }
+  const tab = state.progressKind === 'learn' ? 'learn' : 'task';
+  const branch = d[tab] || { recordings:{}, submittedWordIds:[], submittedAtMap:{} };
+  const submittedSet = new Set((branch.submittedWordIds||[]).map(x=> String(x)));
+  const items = Object.entries(branch.recordings||{})
+    .filter(([wid])=> submittedSet.has(String(wid)))
+    .map(([wid, recs])=>{
+      const w = window.__WORDS__.find(x=> String(x.id)===String(wid));
+      const submitTs = (branch.submittedAtMap?.[wid] ?? branch.submittedAtMap?.[String(wid)] ?? 0);
+      const submitTimeStr = submitTs ? new Date(Number(submitTs)).toLocaleString() : '';
+      const audios = (recs||[]).map((r)=> r ? `<div class=\"stat\"><audio controls src=\"${r.url}\"></audio><span class=\"badge\">${Math.round((Number(r.score||0))*100)}</span></div>` : '').join('');
+      return `<div class=\"card\"><div class=\"word\">${w?.en || '未知'}</div><div class=\"cn\">${w?.cn || ''} · ${w?.pinyin || ''}</div>${submitTimeStr ? `<div class=\"badge\">提交时间 ${submitTimeStr}</div>` : ''}${audios}</div>`;
+    }).join('');
 
   root.innerHTML = `
     <section class=\"view\">
@@ -855,4 +1141,153 @@ function averageDailyScore(d){
 
 window.addEventListener('DOMContentLoaded', init);
 
+async function autoCheckCompleteTask(){
+  const db = getGlobal();
+  const d = db.days?.[state.todayKey] || { recordings: {} };
+  const taskIds = (db.taskSelections?.[state.todayKey]?.wordIds) || [];
+  if(taskIds.length !== TASK_COUNT) return;
+  for(const id of taskIds){
+    const recs = (d.recordings?.[id] || []).filter(Boolean);
+    if(recs.length < MAX_RECORDS){
+      return;
+    }
+  }
+  // 所有任务词达标，计算均分并标记完成
+  const scores = [];
+  taskIds.forEach(id=>{
+    const recs = d.recordings?.[id] || [];
+    (recs||[]).forEach(r=>{ if(r && typeof r.score==='number') scores.push(r.score); });
+  });
+  const avg = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+  setTaskAvgScore(avg, state.todayKey);
+  markTaskCompleted(state.todayKey);
+  try{
+    fetch('/api/progress/complete-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day: state.todayKey, taskAvgScore: avg })
+    });
+  }catch{}
+}
+
+function preferJpgUrl(src){
+  if(!src) return { preferred: '', fallback: '' };
+  const s = String(src);
+  if(/\.jpg($|\?)/i.test(s)) return { preferred: s, fallback: s };
+  // 优先尝试 .jpg 同名
+  try{
+    const u = new URL(s, location.origin);
+    const parts = u.pathname.split('/');
+    const name = parts.pop() || '';
+    const base = name.replace(/\.[^.]*$/, '');
+    const jpgName = base + '.jpg';
+    const jpgPath = [...parts, jpgName].join('/');
+    const preferred = (u.origin + jpgPath + (u.search||''));
+    return { preferred, fallback: s };
+  }catch{
+    // 可能是相对路径
+    const base = s.replace(/\.[^.]*($|\?.*)/, '');
+    const preferred = base + '.jpg';
+    return { preferred, fallback: s };
+  }
+}
+
+function setupLazyImages(root){
+  const imgs = root.querySelectorAll('img.lazy[data-src]');
+  const loadImg = (img)=>{
+    if(img.dataset.loaded) return;
+    const src = img.getAttribute('data-src') || '';
+    const fallback = img.getAttribute('data-fallback-src') || '';
+    img.src = src;
+    img.onerror = ()=>{ if(fallback && img.src !== fallback){ img.src = fallback; } };
+    img.dataset.loaded = '1';
+  };
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) loadImg(e.target); });
+  }, { rootMargin: '200px' });
+  imgs.forEach(img=> io.observe(img));
+}
+
+// 快速版本：若已有 assets/words/*.jpg 则直接用；否则原样
+function preferJpgUrlFast(src){
+  if(!src) return { preferred: '', fallback: '' };
+  const s = String(src);
+  if(/^assets\/words\//i.test(s)){
+    // 若不是 .jpg，替换为 .jpg 作为首选
+    if(!/\.jpg($|\?)/i.test(s)){
+      const preferred = s.replace(/\.[^.]*($|\?.*)/, '.jpg$1');
+      return { preferred, fallback: s };
+    }
+  }
+  return { preferred: s, fallback: s };
+}
+
+// 简单防抖：在导航到进度页时触发一次同步，避免重复请求
+let __syncTimer = null;
+function debounceSyncAll(){
+  if(__syncTimer){ clearTimeout(__syncTimer); __syncTimer=null; }
+  __syncTimer = setTimeout(()=>{ __syncTimer=null; syncAllProgressFromServer().then(()=>{ if(state.route==='progress') render(); }); }, 200);
+}
+
+
+async function syncProgressFromServer(dayKey){
+  try{
+    const resp = await fetch(`/api/progress/${encodeURIComponent(dayKey)}`, { cache: 'no-store' });
+    if(!resp.ok) return;
+    const data = await resp.json();
+    if(!data || !data.ok) return;
+    const serverDay = data.day || {};
+    // 合并到本地
+    const local = getGlobal();
+    if(!local.days) local.days = {};
+    const d = local.days[dayKey] || { learnedIds: [], recordings: {}, notes: '', submittedWordIds: [], submittedAtMap: {}, taskCompleted: false, taskAvgScore: 0 };
+    // 合并录音：按 wordId 追加并裁剪为 3 条
+    Object.entries(serverDay.recordings||{}).forEach(([wid, recs])=>{
+      const a = Array.isArray(d.recordings[wid]) ? d.recordings[wid].filter(Boolean) : [];
+      const b = (recs||[]).filter(Boolean);
+      const merged = [...a, ...b].slice(-3);
+      d.recordings[wid] = merged;
+    });
+    // 合并提交
+    const sIds = new Set(serverDay.submittedWordIds||[]);
+    d.submittedWordIds = Array.from(new Set([...(d.submittedWordIds||[]), ...sIds]));
+    d.submittedAtMap = { ...(d.submittedAtMap||{}), ...(serverDay.submittedAtMap||{}) };
+    // 任务
+    d.taskCompleted = Boolean(d.taskCompleted) || Boolean(serverDay.taskCompleted);
+    d.taskAvgScore = Math.max(Number(d.taskAvgScore||0), Number(serverDay.taskAvgScore||0));
+    local.days[dayKey] = d;
+    setGlobal(local);
+  }catch{}
+}
+
+async function syncAllProgressFromServer(){
+  if(__syncingAll) return;
+  __syncingAll = true;
+  try{
+    const resp = await fetch('/api/progress', { cache: 'no-store' });
+    if(!resp.ok) return;
+    const data = await resp.json();
+    if(!data || !data.ok) return;
+    const days = data.days || {};
+    const local = getGlobal();
+    if(!local.days) local.days = {};
+    for(const [dayKey, serverDay] of Object.entries(days)){
+      const d = local.days[dayKey] || { learnedIds: [], recordings: {}, notes: '', submittedWordIds: [], submittedAtMap: {}, taskCompleted: false, taskAvgScore: 0 };
+      Object.entries(serverDay.recordings||{}).forEach(([wid, recs])=>{
+        const a = Array.isArray(d.recordings[wid]) ? d.recordings[wid].filter(Boolean) : [];
+        const b = (recs||[]).filter(Boolean);
+        const merged = [...a, ...b].slice(-3);
+        d.recordings[wid] = merged;
+      });
+      const sIds = new Set(serverDay.submittedWordIds||[]);
+      d.submittedWordIds = Array.from(new Set([...(d.submittedWordIds||[]), ...sIds]));
+      d.submittedAtMap = { ...(d.submittedAtMap||{}), ...(serverDay.submittedAtMap||{}) };
+      d.taskCompleted = Boolean(d.taskCompleted) || Boolean(serverDay.taskCompleted);
+      d.taskAvgScore = Math.max(Number(d.taskAvgScore||0), Number(serverDay.taskAvgScore||0));
+      local.days[dayKey] = d;
+    }
+    setGlobal(local);
+  }catch{}
+  finally{ __syncingAll = false; }
+}
 
