@@ -275,6 +275,27 @@ def post_progress_recording():
     return jsonify({ 'ok': True })
 
 
+@app.get('/api/recordings/list')
+def list_recordings():
+    """列出服务器上 assets/records 的所有录音文件，供客户端跨设备共享展示。
+    返回: { ok: true, files: [{ name, url, mtime }] }
+    """
+    files = []
+    try:
+        for name in sorted(os.listdir(RECORDS_DIR)):
+            if not name.lower().endswith(('.webm','.wav','.mp3','.m4a','.ogg')):
+                continue
+            path = os.path.join(RECORDS_DIR, name)
+            try:
+                stat = os.stat(path)
+                files.append({ 'name': name, 'url': f'assets/records/{name}', 'mtime': int(stat.st_mtime) })
+            except OSError:
+                continue
+    except FileNotFoundError:
+        pass
+    return jsonify({ 'ok': True, 'files': files })
+
+
 @app.post('/api/progress/submit-word')
 def post_progress_submit_word():
     payload = request.get_json(silent=True) or {}

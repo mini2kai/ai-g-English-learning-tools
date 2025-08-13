@@ -629,11 +629,14 @@ function bindManualRecord(card, word, startBtn, stopBtn){
 async function addRecordingUI(card, word, blob, score, transcript, localUrl=''){ 
   const kidId = 'single';
   // 选择首个空位；若满，则替换最早的记录
-  const idx = chooseAttemptIndex(word.id);
+  const isLearn = document.querySelector('.page-title')?.textContent?.includes('学习新词');
+  const kind = isLearn ? 'learn' : 'task';
+  const idx = chooseAttemptIndex(word.id, kind);
   // 若当前位置已有旧文件且为本地文件/旧blob，先删除
   try{
     const day = getKidDay(kidId, formatDateKey());
-    const old = day.recordings[word.id]?.[idx];
+    const branch0 = kind==='learn' ? (day.learnRecordings||{}) : (day.recordings||{});
+    const old = branch0[word.id]?.[idx];
     const oldUrl = old?.localUrl || '';
     const oldBlobKey = old?.blobKey || '';
     if(oldUrl) await removeLocalRecordingFileByUrl(oldUrl);
@@ -643,14 +646,13 @@ async function addRecordingUI(card, word, blob, score, transcript, localUrl=''){
   const blobKey = await putRecordingBlob('single', word.id, idx, formatDateKey(), blob);
   const url = localUrl || URL.createObjectURL(blob);
   // learn/task 分支：根据当前页面
-  const isLearn = document.querySelector('.page-title')?.textContent?.includes('学习新词');
-  saveRecording(kidId, word.id, idx, { url, localUrl, score, ts: Date.now(), transcript, blobKey }, formatDateKey(), isLearn ? 'learn' : 'task');
+  saveRecording(kidId, word.id, idx, { url, localUrl, score, ts: Date.now(), transcript, blobKey }, formatDateKey(), kind);
   // 同步到服务器（追加一条）
   try{
     await fetch('/api/progress/recording', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ day: formatDateKey(), wordId: String(word.id), url, score, ts: Date.now(), transcript, kind: isLearn ? 'learn' : 'task' })
+      body: JSON.stringify({ day: formatDateKey(), wordId: String(word.id), url, score, ts: Date.now(), transcript, kind })
     });
   }catch{}
   const dots = card.querySelectorAll('.dot');
@@ -735,21 +737,23 @@ async function ensureRecordsDirSelectedOnce(){
   }catch{ /* 用户取消 */ }
 }
 
-function findAvailableAttemptIndex(wordId){
+function findAvailableAttemptIndex(wordId, kind='task'){
   const d = getKidDay('single', formatDateKey());
-  const arr = d.recordings[wordId] || [];
+  const branch = kind==='learn' ? (d.learnRecordings||{}) : (d.recordings||{});
+  const arr = branch[wordId] || [];
   for(let i=0;i<MAX_RECORDS;i++){
     if(!arr[i]) return i;
   }
   return -1;
 }
 
-function chooseAttemptIndex(wordId){
-  const available = findAvailableAttemptIndex(wordId);
+function chooseAttemptIndex(wordId, kind='task'){
+  const available = findAvailableAttemptIndex(wordId, kind);
   if(available >= 0) return available;
   // 若无空位，找最早的 ts 进行替换
   const d = getKidDay('single', formatDateKey());
-  const arr = d.recordings[wordId] || [];
+  const branch = kind==='learn' ? (d.learnRecordings||{}) : (d.recordings||{});
+  const arr = branch[wordId] || [];
   let bestIdx = 0;
   let bestTs = Number.MAX_SAFE_INTEGER;
   for(let i=0;i<Math.min(MAX_RECORDS, arr.length); i++){
@@ -1010,11 +1014,21 @@ async function renderProgressDetail(root, dayKey){
       return `<div class=\"card\"><div class=\"word\">${w?.en || '未知'}</div><div class=\"cn\">${w?.cn || ''} · ${w?.pinyin || ''}</div>${submitTimeStr ? `<div class=\"badge\">提交时间 ${submitTimeStr}</div>` : ''}${audios}</div>`;
     }).join('');
 
+  // 服务器录音统一展示
+  let srv = [];
+  try{
+    const r = await fetch('/api/recordings/list', { cache: 'no-store' });
+    if(r.ok){ const j = await r.json(); if(j && j.ok) srv = j.files || []; }
+  }catch{}
+  const srvList = (srv||[]).map(f=> `<div class=\"stat\"><audio controls src=\"${f.url}\"></audio><span class=\"badge\">${f.name}</span></div>`).join('') || '暂无服务器录音';
+
   root.innerHTML = `
     <section class=\"view\">
       <div class=\"page-title\">${dayKey} 详情</div>
       <div class=\"page-subtitle\">可查看每个录音与得分</div>
       <div class=\"grid\">${items || '无录音'}</div>
+      <div class=\"page-subtitle\" style=\"margin-top:14px\">服务器录音（全部设备共用）</div>
+      <div class=\"card\">${srvList}</div>
       <div style=\"margin-top:16px;text-align:center\"><a href=\"#progress\" class=\"btn small\" id=\"btnBackProgress\">返回</a></div>
     </section>`;
 
