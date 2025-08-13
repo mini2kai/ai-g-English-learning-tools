@@ -14,13 +14,13 @@
         <span>Word Wiz for Kids</span>
       </div>
       <nav class="nav">
-        <a href="#today" class="nav-link" data-route="today">今日新词</a>
+        <a href="#learn" class="nav-link" data-route="learn">学习新词</a>
+        <a href="#task" class="nav-link" data-route="task">每日任务</a>
         <a href="#all" class="nav-link" data-route="all">全部</a>
         <a href="#progress" class="nav-link" data-route="progress">进度</a>
       </nav>
       <div class="header-actions">
-        <button id="btnClearCache" class="btn danger small" title="清空本地缓存并重置进度">清理缓存</button>
-        <label for="dailyCountInput" style="margin-left:8px;color:#374151">每日个数</label>
+        <label for="dailyCountInput" style="margin-left:8px;color:#374151">新词个数</label>
         <input type="number" id="dailyCountInput" class="num-input" min="1" max="20" step="1" value="5" />
         <span style="color:#6b7280;font-size:12px">(每行固定展示5个)</span>
         <button id="btnSwapBatch" class="btn secondary small" style="margin-left:10px">换一批</button>
@@ -28,6 +28,8 @@
         <div class="dropdown">
           <button id="btnSettings" class="btn secondary small">设置 ▾</button>
           <div id="settingsMenu" class="dropdown-menu hidden">
+            <button class="btn secondary small" id="btnSwitchToMobile">切换到手机版</button>
+            <button id="btnClearCache" class="btn danger small" title="清空本地缓存并重置进度">清理缓存</button>
             <button id="btnSetImagesDir" class="btn secondary small" title="设置图片保存目录（仅需设置一次，选择项目内 assets/words/）">设置图片目录</button>
             <button id="btnSetRecordsDir" class="btn secondary small" title="设置录音保存目录（仅需设置一次，选择项目内 assets/records/）">设置录音目录</button>
             <button id="btnSetCsvFile" class="btn secondary small" title="设置 CSV 文件（仅需设置一次，选择项目内 data/words.csv）">设置CSV文件</button>

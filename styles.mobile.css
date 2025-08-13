@@ -1,0 +1,26 @@
+/* 专用移动端样式，仅在 mobile.html 中引入，确保不影响 web 端 */
+
+body{ background:#f9f6ef; }
+.app-header.mobile{ position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid #eee; display:flex; align-items:center; justify-content:space-between; padding:8px 12px }
+.app-main.mobile{ padding:12px 12px 68px; }
+
+/* 底部 TabBar */
+.mobile-tabbar{ position:fixed; bottom:0; left:0; right:0; height:56px; background:#fff; border-top:1px solid #eee; display:flex; justify-content:space-around; align-items:center; z-index:20 }
+.mobile-tabbar .tab{ text-decoration:none; color:#374151; font-weight:700 }
+.mobile-tabbar .tab.active{ color:#0ea5e9 }
+
+/* 列表栅格改为 1 列 */
+.view{ max-width:860px; margin:0 auto }
+.grid{ display:grid; grid-template-columns:1fr; gap:14px }
+.card{ padding:16px; border-radius:16px }
+.word{ font-size:20px }
+.img{ height:160px }
+.sentence{ font-size:14px }
+.actions .btn{ padding:8px 10px }
+.btn.small{ padding:6px 10px }
+.badge{ font-size:12px }
+
+/* 搜索栏收窄 */
+.search-input{ width:100%; max-width:100% }
+
+

@@ -2,7 +2,7 @@
 REM Word Wiz for Kids - One-click launcher (Windows)
 setlocal
 
-set PORT=8080
+set PORT=18080
 
 REM Go to the directory of this script
 cd /d "%~dp0"
@@ -20,10 +20,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo 启动本地服务器：http://localhost:%PORT%/
-REM Run server in a new console window so this script can also open the browser
-start "WordWiz Server" cmd /c "python -m http.server %PORT%"
-timeout /t 1 >nul
+echo 启动后端服务：http://localhost:%PORT%/
+start "WordWiz Server" cmd /c "python server.py --port %PORT%"
+timeout /t 2 >nul
 start "" "http://localhost:%PORT%/"
 
 echo 服务器已启动。若需停止，请关闭名为 “WordWiz Server” 的窗口。

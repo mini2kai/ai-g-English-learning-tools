@@ -1,2 +1,6 @@
 pypinyin==0.55.0
 requests>=2.31.0
+Flask>=3.0.0
+gTTS>=2.5.1
+pyttsx3>=2.90
+comtypes>=1.2.0; platform_system == "Windows"

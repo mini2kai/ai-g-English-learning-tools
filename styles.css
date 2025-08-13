@@ -13,7 +13,7 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Aria
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--brand);font-size:20px}
 .logo{width:32px;height:32px}
 .logo.small{width:24px;height:24px}
-.nav{display:flex;gap:16px}
+.nav{display:flex;gap:16px;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
 .nav-link{color:#1976d2;text-decoration:none;font-weight:600}
 .nav-link.active{color:#0f5132}
 .header-actions{display:flex;align-items:center;gap:10px}
@@ -77,4 +77,14 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Aria
 /* keyframes 仅保留，容器内联写死，避免样式冲突 */
 .spinner{animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* 完成任务提示 */
+.done-banner{
+  background:#ecfdf5;
+  border:1px solid #10b981;
+  color:#065f46;
+  padding:10px 14px;
+  border-radius:10px;
+  display:inline-block;
+}
 

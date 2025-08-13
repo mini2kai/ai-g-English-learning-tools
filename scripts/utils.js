@@ -31,8 +31,47 @@ export function playAudioBlob(blob){
 export function speak(text){
   const content = String(text || '').trim();
   if(!content) return;
+  const ua = (navigator.userAgent||'').toLowerCase();
+  const isWeChat = /micromessenger|wxwork/.test(ua);
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const isAndroid = /android/.test(ua);
+  const isMobile = isWeChat || isIOS || isAndroid || /mobile/.test(ua);
   const synth = window.speechSynthesis;
-  if(!synth || typeof SpeechSynthesisUtterance === 'undefined') return;
+  const playTtsWithGuard = (url)=>{
+    try{
+      const audio = new Audio(url);
+      audio.setAttribute?.('playsinline','');
+      audio.setAttribute?.('webkit-playsinline','');
+      audio.preload = 'auto';
+      audio.crossOrigin = 'anonymous';
+      let settled = false;
+      const clear = ()=>{
+        audio.removeEventListener('playing', onok);
+        audio.removeEventListener('canplay', onok);
+        audio.removeEventListener('error', onerr);
+      };
+      const onok = ()=>{ if(!settled){ settled=true; clear(); } };
+      const onerr = ()=>{ if(!settled){ settled=true; clear(); alert('暂不支持发音'); } };
+      audio.addEventListener('playing', onok);
+      audio.addEventListener('canplay', onok);
+      audio.addEventListener('error', onerr);
+      const timer = setTimeout(()=>{ if(!settled){ settled=true; clear(); try{ audio.pause(); }catch{} alert('暂不支持发音'); } }, 1800);
+      audio.play().catch(()=>{ /* 某些内核会抛出但随后进入 playing */ });
+      audio.addEventListener('playing', ()=> clearTimeout(timer), { once: true });
+    }catch{ alert('暂不支持发音'); }
+  };
+  // 策略：移动端优先走后端 TTS（尤其是微信内核），桌面端优先本地合成
+  if(isMobile && !isWeChat){
+    const url = `/api/tts?text=${encodeURIComponent(content)}&lang=en&_=${Date.now()}`;
+    playTtsWithGuard(url);
+    return;
+  }
+  // WeChat 或无合成能力时，直接走后端 TTS
+  if(isWeChat || !synth || typeof SpeechSynthesisUtterance === 'undefined'){
+    const url = `/api/tts?text=${encodeURIComponent(content)}&lang=en&_=${Date.now()}`;
+    playTtsWithGuard(url);
+    return;
+  }
 
   const speakNow = () => {
     try{ if(synth.speaking) synth.cancel(); if(synth.paused) synth.resume(); }catch{}
@@ -48,7 +87,7 @@ export function speak(text){
     synth.speak(u);
   };
 
-  // 如果还没加载到 voices，等到 onvoiceschanged 再播，超时兜底
+  // 如果还没加载到 voices，等到 onvoiceschanged 再播，超时兜底回退到 TTS
   let voices = [];
   try{ voices = synth.getVoices() || []; }catch{}
   if(voices.length === 0 && 'onvoiceschanged' in synth){
@@ -56,7 +95,18 @@ export function speak(text){
     const fire = ()=>{ if(!done){ done=true; synth.onvoiceschanged=null; speakNow(); } };
     synth.onvoiceschanged = fire;
     try{ synth.getVoices(); }catch{}
-    setTimeout(fire, 700);
+    setTimeout(fire, 1200);
+    // 进一步兜底：若 2 秒后仍未触发，走服务端 TTS
+    setTimeout(()=>{
+      if(!done){
+        try{
+          const audio = new Audio(`/api/tts?text=${encodeURIComponent(content)}&lang=en`);
+          audio.preload = 'auto';
+          audio.crossOrigin = 'anonymous';
+          audio.play().catch(()=>{});
+        }catch{}
+      }
+    }, 2000);
   }else{
     speakNow();
   }
